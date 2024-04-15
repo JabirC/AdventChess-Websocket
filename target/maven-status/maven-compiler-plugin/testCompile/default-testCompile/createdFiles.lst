@@ -1,0 +1,11 @@
+PawnTest.class
+ChessBoardTest.class
+RookTest.class
+QueenTest.class
+KingTest.class
+ChessGameTest.class
+BishopTest.class
+com/example/adventchess/ApplicationTests.class
+ChessPieceTest.class
+PlayerTest.class
+KnightTest.class
