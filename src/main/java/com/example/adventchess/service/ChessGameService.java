@@ -3,6 +3,7 @@ package com.example.adventchess.service;
 import adventchess.chessgame.logic.ChessGame;
 import com.example.adventchess.model.GameStateMessage;
 import com.example.adventchess.model.MoveMessage;
+import com.example.adventchess.model.GameTime;
 import org.springframework.messaging.simp.SimpMessageSendingOperations;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +20,7 @@ import com.google.gson.Gson;
 public class ChessGameService {
 
     private final Map<String, ChessGame> userGameMap = new HashMap<>();
+    private final Map<String, GameTime> gameTimes = new HashMap<>();
     private final Map<String, String> rematchMap = new HashMap<>();
 
     @Autowired
@@ -43,7 +45,7 @@ public class ChessGameService {
      * @param session2 The session identifier of the second player.
      * @param mode The mode of the game (e.g., "classic" or "adventure").
      */
-    public void createGameSession(String session1, String session2, String mode) {
+    public void createGameSession(String session1, String session2, String mode, int time) {
         String gameId = UUID.randomUUID().toString();
         ChessGame chessGame;
         String[][] board = {
@@ -83,7 +85,7 @@ public class ChessGameService {
         // Store the ChessGame instance associated with each user's session ID
         userGameMap.put(session1, chessGame);
         userGameMap.put(session2, chessGame);
-
+        gameTimes.put(gameId, new GameTime(session1, session2, time));
 
         // Send a message to each user to notify the start of the game
 
@@ -148,6 +150,7 @@ public class ChessGameService {
         // Store the ChessGame instance associated with each user's session ID
         userGameMap.put(session1, chessGame);
         userGameMap.put(session2, chessGame);
+        gameTimes.get(gameId).reset();
 
         // Send a message to each user to notify the start of the game
 
@@ -190,26 +193,39 @@ public class ChessGameService {
                 move = new MoveMessage(-1, -1, -1, -1);
             }
 
-            // Send back the result of the move attempt to both users
-            String messageSession1 = gson.toJson(new GameStateMessage(gameId, game.getStringBoard(), false, !isValidMove, move));
-            String messageSession2 = gson.toJson(new GameStateMessage(gameId, game.getStringBoard(), false, isValidMove, move));
-            messagingTemplate.convertAndSend("/topic/state" + gameId + session, messageSession1);
-            messagingTemplate.convertAndSend("/topic/state" + gameId + game.getOpponentName(session), messageSession2);
+            // Time Management
+            gameTimes.get(gameId).updateSession(session);
+            String timeSession1 = String.format("{\"playerTime\" : %d,\"opponentTime\" : %d }", gameTimes.get(gameId).getTime(session), gameTimes.get(gameId).getTime(game.getOpponentName(session)) );
+            String timeSession2 = String.format("{\"playerTime\" : %d,\"opponentTime\" : %d }", gameTimes.get(gameId).getTime(game.getOpponentName(session)), gameTimes.get(gameId).getTime(session));
+            messagingTemplate.convertAndSend("/topic/time" + gameId + session, timeSession1);
+            messagingTemplate.convertAndSend("/topic/time" + gameId + game.getOpponentName(session), timeSession2);
+
+            if(gameTimes.get(gameId).getTime(session) == 0){
+                String terminalMessage = String.format("{\"result\" : \"%s Wins!\",\"condition\" : \"Timeout\" }", game.getPlayerColor(game.getOpponentName(session)) );
+                messagingTemplate.convertAndSend("/topic/state" + gameId, terminalMessage);
+            }
+            else{
+                // Send back the result of the move attempt to both users
+                String messageSession1 = gson.toJson(new GameStateMessage(gameId, game.getStringBoard(), false, !isValidMove, move));
+                String messageSession2 = gson.toJson(new GameStateMessage(gameId, game.getStringBoard(), false, isValidMove, move));
+                messagingTemplate.convertAndSend("/topic/state" + gameId + session, messageSession1);
+                messagingTemplate.convertAndSend("/topic/state" + gameId + game.getOpponentName(session), messageSession2);
 
 
-            if(isValidMove){
-                // Check if move resulted in a game ending state
+                if(isValidMove){
+                    // Check if move resulted in a game ending state
 
-                String opponentColor = game.getOpponentColor(session);
+                    String opponentColor = game.getOpponentColor(session);
 
-                if (game.isCheckMated(opponentColor)) {
-                    String terminalMessage = String.format("{\"result\" : \"%s Wins!\",\"condition\" : \"Checkmate\" }", game.getPlayerColor(session));
-                    messagingTemplate.convertAndSend("/topic/state" + gameId, terminalMessage);
-                }
+                    if (game.isCheckMated(opponentColor)) {
+                        String terminalMessage = String.format("{\"result\" : \"%s Wins!\",\"condition\" : \"Checkmate\" }", game.getPlayerColor(session));
+                        messagingTemplate.convertAndSend("/topic/state" + gameId, terminalMessage);
+                    }
 
-                if(game.isStaleMate(opponentColor)){
-                    String terminalMessage = String.format("{\"result\" : \"Stalemate\",\"condition\" : \"%s\" }", game.getPlayerColor(session));
-                    messagingTemplate.convertAndSend("/topic/state" + gameId, terminalMessage);
+                    if(game.isStaleMate(opponentColor)){
+                        String terminalMessage = String.format("{\"result\" : \"Stalemate\",\"condition\" : \"%s\" }", game.getPlayerColor(session));
+                        messagingTemplate.convertAndSend("/topic/state" + gameId, terminalMessage);
+                    }
                 }
             }
         }
@@ -217,6 +233,38 @@ public class ChessGameService {
             // Not the user's turn to make a move, send back old game state
             String messageSession1 = gson.toJson(new GameStateMessage(gameId, game.getStringBoard(), false, false, new MoveMessage(-1,-1,-1,-1)));
             messagingTemplate.convertAndSend("/topic/state" + gameId + session, messageSession1);
+        }
+    }
+
+    /**
+     * Performs a time check and ends game if timer reaches 0
+     * 
+     * This method is called when a player requests a time check because a timer reaches 0 on the frontend.
+     * If timer reached 0 on backend, it sends
+     * a terminal message to both players indicating the result of the game.
+     * 
+     * @param session The session identifier of the player requesting a timecheck.
+     * @param gameId The unique identifier of the game.
+     */
+    public void verifyTime(String session, String gameId){
+        ChessGame game = userGameMap.get(session);
+        GameTime time = gameTimes.get(gameId);
+
+        String currentPlayer;
+        if(game.isCurrentPlayer(session)){
+            currentPlayer = session;
+        }
+        else{
+            currentPlayer = game.getOpponentName(session);
+        }
+
+        if(time.getTime(currentPlayer) != 0){
+            time.updateSession(currentPlayer);
+
+            if(time.getTime(currentPlayer) == 0){
+                String terminalMessage = String.format("{\"result\" : \"%s Wins!\",\"condition\" : \"Timeout\" }", game.getPlayerColor(game.getOpponentName(currentPlayer)) );
+                messagingTemplate.convertAndSend("/topic/state" + gameId, terminalMessage);
+            }
         }
     }
 
@@ -285,6 +333,12 @@ public class ChessGameService {
     public void removeGame(String session){
         ChessGame game = userGameMap.get(session);
         if(game != null){
+
+            GameTime time = gameTimes.get(game.getGameId());
+            if(time != null){
+                gameTimes.remove(game.getGameId());
+            }
+
             String opponent = game.getOpponentName(session);
             userGameMap.remove(session);
             userGameMap.remove(opponent);

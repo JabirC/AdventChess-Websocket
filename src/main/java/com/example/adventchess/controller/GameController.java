@@ -26,12 +26,17 @@ import org.springframework.web.util.HtmlUtils;
 
 import com.example.adventchess.service.ChessGameService;
 import com.example.adventchess.model.MoveMessage;
+import com.example.adventchess.model.GameCreation;
 
 
 @Controller
 public class GameController {
-  private final BlockingQueue<String> sessionQueueClassic = new LinkedBlockingQueue<>();
-  private final BlockingQueue<String> sessionQueueAdventure = new LinkedBlockingQueue<>();
+  private final BlockingQueue<String> sessionQueueClassic5 = new LinkedBlockingQueue<>();
+  private final BlockingQueue<String> sessionQueueClassic10 = new LinkedBlockingQueue<>();
+  private final BlockingQueue<String> sessionQueueClassic20 = new LinkedBlockingQueue<>();
+  private final BlockingQueue<String> sessionQueueAdventure5 = new LinkedBlockingQueue<>();
+  private final BlockingQueue<String> sessionQueueAdventure10 = new LinkedBlockingQueue<>();
+  private final BlockingQueue<String> sessionQueueAdventure20 = new LinkedBlockingQueue<>();
   private final ExecutorService executorService = Executors.newCachedThreadPool();
   private final Set<String> pings = new HashSet<>();
 
@@ -45,22 +50,48 @@ public class GameController {
     this.chessGameService = chessGameService;
 
     // Start asynchronous background thread to handle matchmaking
-    startQueueProcessor(sessionQueueClassic, "classic");
-    startQueueProcessor(sessionQueueAdventure, "adventure");
+    startQueueProcessor(sessionQueueClassic5, "classic", 5);
+    startQueueProcessor(sessionQueueClassic10, "classic", 10);
+    startQueueProcessor(sessionQueueClassic20, "classic", 20);
+    startQueueProcessor(sessionQueueAdventure5, "adventure", 5);
+    startQueueProcessor(sessionQueueAdventure10, "adventure", 10);
+    startQueueProcessor(sessionQueueAdventure20, "adventure", 20);
   }
 
  /**
   *  Place players in queue depending on game mode
   */
   @MessageMapping("/connect/game")
-  public void handleConnect(Principal principal, SimpMessageHeaderAccessor headerAccessor, String mode) {
+  public void handleConnect(Principal principal, SimpMessageHeaderAccessor headerAccessor, GameCreation params) {
         String session = principal.getName();
         if (session != null) {
-            if(mode.equals("\"classic\"")){
-              sessionQueueClassic.add(session);
+            if(params.getMode().equals("classic")){
+                if(params.getTime() == 5){
+                    sessionQueueClassic5.add(session);
+                }
+                else if(params.getTime() == 10){
+                    sessionQueueClassic10.add(session);
+                }
+                else if(params.getTime() == 20){
+                    sessionQueueClassic20.add(session);
+                }
+                else {
+                    System.out.println("Invalid Time");
+                }
             }
-            else if(mode.equals("\"adventure\"")){
-              sessionQueueAdventure.add(session);
+            else if(params.getMode().equals("adventure")){
+                if(params.getTime() == 5){
+                    sessionQueueAdventure5.add(session);
+                }
+                else if(params.getTime() == 10){
+                    sessionQueueAdventure10.add(session);
+                }
+                else if(params.getTime() == 20){
+                    sessionQueueAdventure20.add(session);
+                }
+                else {
+                    System.out.println("Invalid Time");
+                }
             }
             else{
               System.out.println("Invalid game mode");
@@ -96,6 +127,15 @@ public class GameController {
         String session = principal.getName();
         chessGameService.verifyMove(session, gameId, moveMessage);
   }
+
+ /**
+  *  Player requested time check
+  */
+  @MessageMapping("/game/{gameId}/time")
+  public void handleTimeCheck(@DestinationVariable String gameId, Principal principal) {
+        String session = principal.getName();
+        chessGameService.verifyTime(session, gameId);
+  }
   
  /**
   *  Used to check for user availabity when matching user for a new game
@@ -109,7 +149,7 @@ public class GameController {
  /**
   *  Background asynchronous thread that handles matchmaking for a given game queue
   */
-  private void startQueueProcessor(BlockingQueue<String> sessionQueue, String mode) {
+  private void startQueueProcessor(BlockingQueue<String> sessionQueue, String mode, int time) {
     executorService.execute(() -> {
         while (true) {
             try {
@@ -124,7 +164,7 @@ public class GameController {
                     heartbeatCheck2.thenAccept(result2 -> {
                         // both players are connected
                         if (result1 && result2) {
-                            chessGameService.createGameSession(session1, session2, mode);
+                            chessGameService.createGameSession(session1, session2, mode, time);
                         // If one player is not connected, put connected player back into queue
                         } else if (!result1 && result2) {
                             sessionQueue.add(session2);

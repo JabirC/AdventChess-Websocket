@@ -3,12 +3,14 @@ adventchess/chessgame/model/Rook.class
 com/example/adventchess/handler/CustomHandshakeHandler.class
 com/example/adventchess/GameController.class
 adventchess/chessgame/model/Player.class
+com/example/adventchess/model/GameTime.class
 adventchess/chessgame/model/Pawn.class
 adventchess/chessgame/logic/MoveValidator.class
 adventchess/chessgame/model/ChessPiece.class
 adventchess/chessgame/model/Knight.class
 adventchess/chessgame/model/Queen.class
 com/example/adventchess/service/ChessGameService.class
+com/example/adventchess/model/GameCreation.class
 com/example/adventchess/WebSocketConfig.class
 adventchess/chessgame/model/King.class
 adventchess/chessgame/logic/ChessGame.class
