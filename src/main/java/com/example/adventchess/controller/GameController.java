@@ -43,6 +43,19 @@ public class GameController {
   private final ExecutorService executorService = Executors.newCachedThreadPool();
   private final Set<String> pings = new HashSet<>();
 
+  private final Map<String, Long> totalMatchMakingTimeClassic5 = new HashMap<>();
+  private final Map<String, Long> totalMatchMakingTimeClassic10 = new HashMap<>();
+  private final Map<String, Long> totalMatchMakingTimeClassic20 = new HashMap<>();
+  private final Map<String, Long> totalMatchMakingTimeAdventure5 = new HashMap<>();
+  private final Map<String, Long> totalMatchMakingTimeAdventure10 = new HashMap<>();
+  private final Map<String, Long> totalMatchMakingTimeAdventure20 = new HashMap<>();
+
+  private final Map<String, Integer> matchedPlayersClassic5 = new HashMap<>();
+  private final Map<String, Integer> matchedPlayersClassic10 = new HashMap<>();
+  private final Map<String, Integer> matchedPlayersClassic20 = new HashMap<>();
+  private final Map<String, Integer> matchedPlayersAdventure5 = new HashMap<>();
+  private final Map<String, Integer> matchedPlayersAdventure10 = new HashMap<>();
+  private final Map<String, Integer> matchedPlayersAdventure20 = new HashMap<>();
 
   SimpMessagingTemplate simpMessagingTemplate;
   ChessGameService chessGameService;
@@ -143,12 +156,42 @@ public class GameController {
   *  Background asynchronous thread that handles matchmaking for a given game queue
   */
   private void startQueueProcessor(BlockingQueue<String> sessionQueue, String mode, int time) {
+    Map<String, Long> totalMatchMakingTime;
+    Map<String, Integer> matchedPlayers;
+
+    // Select the appropriate maps based on the mode and time
+    if (mode.equals("classic")) {
+        if (time == 5) {
+            totalMatchMakingTime = totalMatchMakingTimeClassic5;
+            matchedPlayers = matchedPlayersClassic5;
+        } else if (time == 10) {
+            totalMatchMakingTime = totalMatchMakingTimeClassic10;
+            matchedPlayers = matchedPlayersClassic10;
+        } else {
+            totalMatchMakingTime = totalMatchMakingTimeClassic20;
+            matchedPlayers = matchedPlayersClassic20;
+        }
+    } else {
+        if (time == 5) {
+            totalMatchMakingTime = totalMatchMakingTimeAdventure5;
+            matchedPlayers = matchedPlayersAdventure5;
+        } else if (time == 10) {
+            totalMatchMakingTime = totalMatchMakingTimeAdventure10;
+            matchedPlayers = matchedPlayersAdventure10;
+        } else {
+            totalMatchMakingTime = totalMatchMakingTimeAdventure20;
+            matchedPlayers = matchedPlayersAdventure20;
+        }
+    }
+
     executorService.execute(() -> {
         while (true) {
             try {
                 List<String> sessions = new ArrayList<>();
                 // Take a batch of players from the queue
-                sessions.add(sessionQueue.take());
+                String firstSession = sessionQueue.take();
+                long startTime = System.currentTimeMillis();
+                sessions.add(firstSession);
                 sessionQueue.drainTo(sessions, 9); // Drain up to 10 players
 
                 // Perform heartbeat checks asynchronously for the batch
@@ -170,7 +213,15 @@ public class GameController {
                         // This player is connected, find a match
                         String otherSession = sessionQueue.take();
                         if (otherSession != null) {
+                            long endTime = System.currentTimeMillis();
+                            long matchMakingTime = endTime - startTime;
+
+                            // Update total match-making time and matched players count
+                            totalMatchMakingTime.put(session, totalMatchMakingTime.getOrDefault(session, 0L) + matchMakingTime);
+                            matchedPlayers.put(session, matchedPlayers.getOrDefault(session, 0) + 1);
+
                             chessGameService.createGameSession(session, otherSession, mode, time);
+                            System.out.println("Avg mm time (" + mode + ":" + time +"min) : " + getAverageMatchMakingTime(mode, time));
                         } else {
                             // No match found, put the player back into the queue
                             sessionQueue.add(session);
@@ -185,6 +236,45 @@ public class GameController {
             }
         }
     });
+}
+
+public double getAverageMatchMakingTime(String mode, int time) {
+    Map<String, Long> totalMatchMakingTime;
+    Map<String, Integer> matchedPlayers;
+
+    // Select the appropriate maps based on the mode and time
+    if (mode.equals("classic")) {
+        if (time == 5) {
+            totalMatchMakingTime = totalMatchMakingTimeClassic5;
+            matchedPlayers = matchedPlayersClassic5;
+        } else if (time == 10) {
+            totalMatchMakingTime = totalMatchMakingTimeClassic10;
+            matchedPlayers = matchedPlayersClassic10;
+        } else {
+            totalMatchMakingTime = totalMatchMakingTimeClassic20;
+            matchedPlayers = matchedPlayersClassic20;
+        }
+    } else {
+        if (time == 5) {
+            totalMatchMakingTime = totalMatchMakingTimeAdventure5;
+            matchedPlayers = matchedPlayersAdventure5;
+        } else if (time == 10) {
+            totalMatchMakingTime = totalMatchMakingTimeAdventure10;
+            matchedPlayers = matchedPlayersAdventure10;
+        } else {
+            totalMatchMakingTime = totalMatchMakingTimeAdventure20;
+            matchedPlayers = matchedPlayersAdventure20;
+        }
+    }
+
+    long totalTime = totalMatchMakingTime.values().stream().mapToLong(Long::longValue).sum();
+    int totalMatchedPlayers = matchedPlayers.values().stream().mapToInt(Integer::intValue).sum();
+
+    if (totalMatchedPlayers > 0) {
+        return (double) totalTime / totalMatchedPlayers;
+    } else {
+        return 0.0;
+    }
 }
 
 /**
