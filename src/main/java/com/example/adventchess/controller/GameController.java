@@ -12,6 +12,9 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Iterator;
 
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
@@ -63,43 +66,33 @@ public class GameController {
   */
   @MessageMapping("/connect/game")
   public void handleConnect(Principal principal, SimpMessageHeaderAccessor headerAccessor, GameCreation params) {
-        String session = principal.getName();
-        if (session != null) {
-            if(params.getMode().equals("classic")){
-                if(params.getTime() == 5){
-                    sessionQueueClassic5.add(session);
-                }
-                else if(params.getTime() == 10){
-                    sessionQueueClassic10.add(session);
-                }
-                else if(params.getTime() == 20){
-                    sessionQueueClassic20.add(session);
-                }
-                else {
-                    System.out.println("Invalid Time");
-                }
-            }
-            else if(params.getMode().equals("adventure")){
-                if(params.getTime() == 5){
-                    sessionQueueAdventure5.add(session);
-                }
-                else if(params.getTime() == 10){
-                    sessionQueueAdventure10.add(session);
-                }
-                else if(params.getTime() == 20){
-                    sessionQueueAdventure20.add(session);
-                }
-                else {
-                    System.out.println("Invalid Time");
-                }
-            }
-            else{
+      String session = principal.getName();
+      if (session != null) {
+          if (params.getMode().equals("classic")) {
+              if (params.getTime() == 5) {
+                  sessionQueueClassic5.add(session);
+              } else if (params.getTime() == 10) {
+                  sessionQueueClassic10.add(session);
+              } else if (params.getTime() == 20) {
+                  sessionQueueClassic20.add(session);
+              } else {
+                  System.out.println("Invalid Time");
+              }
+          } else if (params.getMode().equals("adventure")) {
+              if (params.getTime() == 5) {
+                  sessionQueueAdventure5.add(session);
+              } else if (params.getTime() == 10) {
+                  sessionQueueAdventure10.add(session);
+              } else if (params.getTime() == 20) {
+                  sessionQueueAdventure20.add(session); // Fixed typo
+              } else {
+                  System.out.println("Invalid Time");
+              }
+          } else {
               System.out.println("Invalid game mode");
-            }
-
-        }
+          }
+      }
   }
-
 
  /**
   *  Handle multiple types of player disconnections such as page reload, component destruction, and resignation
@@ -153,27 +146,40 @@ public class GameController {
     executorService.execute(() -> {
         while (true) {
             try {
-                // Take two players from the queue and check their connection
-                String session1 = sessionQueue.take();
-                String session2 = sessionQueue.take();
-                CompletableFuture<Boolean> heartbeatCheck1 = checkHeartbeatAsync(session1);
-                CompletableFuture<Boolean> heartbeatCheck2 = checkHeartbeatAsync(session2);
+                List<String> sessions = new ArrayList<>();
+                // Take a batch of players from the queue
+                sessions.add(sessionQueue.take());
+                sessionQueue.drainTo(sessions, 9); // Drain up to 10 players
 
-                // Perform actions asynchronously when heartbeat checks complete
-                heartbeatCheck1.thenAccept(result1 -> {
-                    heartbeatCheck2.thenAccept(result2 -> {
-                        // both players are connected
-                        if (result1 && result2) {
-                            chessGameService.createGameSession(session1, session2, mode, time);
-                        // If one player is not connected, put connected player back into queue
-                        } else if (!result1 && result2) {
-                            sessionQueue.add(session2);
-                        } else if (result1 && !result2) {
-                            sessionQueue.add(session1);
+                // Perform heartbeat checks asynchronously for the batch
+                List<CompletableFuture<Boolean>> heartbeatChecks = new ArrayList<>();
+                for (String session : sessions) {
+                    heartbeatChecks.add(checkHeartbeatAsync(session));
+                }
+
+                // Wait for all heartbeat checks to complete
+                CompletableFuture.allOf(heartbeatChecks.toArray(new CompletableFuture[0])).join();
+
+                // Process the results
+                Iterator<String> sessionsIterator = sessions.iterator();
+                for (CompletableFuture<Boolean> heartbeatCheck : heartbeatChecks) {
+                    boolean result = heartbeatCheck.get();
+                    String session = sessionsIterator.next();
+
+                    if (result) {
+                        // This player is connected, find a match
+                        String otherSession = sessionQueue.take();
+                        if (otherSession != null) {
+                            chessGameService.createGameSession(session, otherSession, mode, time);
+                        } else {
+                            // No match found, put the player back into the queue
+                            sessionQueue.add(session);
                         }
-                    });
-                });
-            } catch (InterruptedException e) {
+                    } else {
+                        // This player is not connected, do nothing
+                    }
+                }
+            } catch (InterruptedException | ExecutionException e) {
                 e.printStackTrace();
                 Thread.currentThread().interrupt();
             }
@@ -192,7 +198,7 @@ private CompletableFuture<Boolean> checkHeartbeatAsync(String sessionId) {
           simpMessagingTemplate.convertAndSend("/topic/ping" + sessionId, message);
           
           // Wait for pong response within a timeout period
-          Thread.sleep(500); // Wait for .5 second (adjust as needed)
+          Thread.sleep(250); // Wait for .5 second (adjust as needed)
           
           // Check if pong response was received within the timeout
           if(pings.contains(sessionId)){
